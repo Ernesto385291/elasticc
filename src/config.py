@@ -8,7 +8,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROCESSED_DIR = PROJECT_ROOT / "processed"
 
-RBAND_PHOTOMETRY_PATH = PROCESSED_DIR / "elasticc_rband_photometry.parquet"
+GBAND_RBAND_PHOTOMETRY_PATH = PROCESSED_DIR / "elasticc_grband_photometry.parquet"
+RBAND_PHOTOMETRY_PATH = GBAND_RBAND_PHOTOMETRY_PATH
 FEATURES_PATH = PROCESSED_DIR / "features_extracted.parquet"
 TRAIN_PATH = PROCESSED_DIR / "train.parquet"
 TEST_PATH = PROCESSED_DIR / "test.parquet"
@@ -17,7 +18,7 @@ VAL_PATH = PROCESSED_DIR / "val.parquet"
 RANDOM_STATE = 42
 TARGET_COLUMN = "target"
 SNID_COLUMN = "SNID"
-FEATURE_COLUMNS = [
+BASE_FEATURE_COLUMNS = [
     "Mean",
     "Std",
     "Skew",
@@ -25,6 +26,11 @@ FEATURE_COLUMNS = [
     "Mean_Variance",
     "Period",
     "Amplitude",
+]
+FEATURE_COLUMNS = [
+    *(f"{feature}_g" for feature in BASE_FEATURE_COLUMNS),
+    *(f"{feature}_r" for feature in BASE_FEATURE_COLUMNS),
+    "Color_g_r",
 ]
 
 # Required fixed class distribution. Do not replace with percentage splits.

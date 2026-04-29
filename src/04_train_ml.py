@@ -83,6 +83,16 @@ def train_xgboost(train_path: str, test_path: str, model_output: str, n_jobs: in
             digits=4,
         )
     )
+
+    importances = sorted(
+        zip(FEATURE_COLUMNS, model.feature_importances_, strict=True),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    print("\nFeature Importance:")
+    for feature_name, importance in importances:
+        print(f"{feature_name}: {importance:.6f}")
+
     model.save_model(model_output)
     print(f"Saved model to {model_output}")
     return model

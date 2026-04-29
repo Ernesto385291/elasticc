@@ -81,15 +81,14 @@ def frame_to_xy(df: pd.DataFrame, label_encoder: LabelEncoder | None = None):
 
 
 def make_loader(
-    x: np.ndarray,
-    y: np.ndarray,
+    x: torch.Tensor,
+    y: torch.Tensor,
     batch_size: int,
     shuffle: bool,
     loader_workers: int,
 ) -> DataLoader:
-    dataset = TensorDataset(torch.from_numpy(x), torch.from_numpy(y))
     return DataLoader(
-        dataset,
+        TensorDataset(x, y),
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=max(0, loader_workers),
@@ -138,15 +137,47 @@ def train_mlp(args: argparse.Namespace) -> MLPClassifier:
     x_train = scaler.fit_transform(x_train).astype(np.float32)
     x_val = scaler.transform(x_val).astype(np.float32)
     x_test = scaler.transform(x_test).astype(np.float32)
+    if x_train.shape[1] != 15:
+        raise ValueError(f"Expected exactly 15 input features, found {x_train.shape[1]}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MLPClassifier(input_dim=x_train.shape[1], num_classes=len(label_encoder.classes_)).to(device)
+    print(f"Using device: {device}")
+    if device.type == "cuda" and args.loader_workers > 0:
+        print("CUDA tensors are preloaded on the GPU; forcing --loader-workers 0.")
+        args.loader_workers = 0
+
+    x_train_tensor = torch.from_numpy(x_train).to(device)
+    y_train_tensor = torch.from_numpy(y_train).to(device)
+    x_val_tensor = torch.from_numpy(x_val).to(device)
+    y_val_tensor = torch.from_numpy(y_val).to(device)
+    x_test_tensor = torch.from_numpy(x_test).to(device)
+    y_test_tensor = torch.from_numpy(y_test).to(device)
+
+    model = MLPClassifier(input_dim=15, num_classes=len(label_encoder.classes_)).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    train_loader = make_loader(x_train, y_train, args.batch_size, shuffle=True, loader_workers=args.loader_workers)
-    val_loader = make_loader(x_val, y_val, args.batch_size, shuffle=False, loader_workers=args.loader_workers)
-    test_loader = make_loader(x_test, y_test, args.batch_size, shuffle=False, loader_workers=args.loader_workers)
+    train_loader = make_loader(
+        x_train_tensor,
+        y_train_tensor,
+        args.batch_size,
+        shuffle=True,
+        loader_workers=args.loader_workers,
+    )
+    val_loader = make_loader(
+        x_val_tensor,
+        y_val_tensor,
+        args.batch_size,
+        shuffle=False,
+        loader_workers=args.loader_workers,
+    )
+    test_loader = make_loader(
+        x_test_tensor,
+        y_test_tensor,
+        args.batch_size,
+        shuffle=False,
+        loader_workers=args.loader_workers,
+    )
 
     best_val_loss = float("inf")
     epochs_without_improvement = 0
@@ -195,7 +226,7 @@ def train_mlp(args: argparse.Namespace) -> MLPClassifier:
                 break
 
     if best_state is not None:
-        model.load_state_dict(best_state)
+        model.load_state_dict({key: value.to(device) for key, value in best_state.items()})
 
     test_predictions = predict(model, test_loader, device)
     print(

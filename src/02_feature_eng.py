@@ -1,4 +1,4 @@
-"""Extract statistical and Lomb-Scargle features from r-band light curves."""
+"""Extract per-band statistical and Lomb-Scargle features from g/r light curves."""
 
 from __future__ import annotations
 
@@ -11,12 +11,18 @@ import pandas as pd
 from astropy.timeseries import LombScargle
 from scipy.stats import kurtosis, skew
 
-from config import FEATURES_PATH, RBAND_PHOTOMETRY_PATH, SNID_COLUMN, TARGET_COLUMN
+from config import (
+    BASE_FEATURE_COLUMNS,
+    FEATURES_PATH,
+    GBAND_RBAND_PHOTOMETRY_PATH,
+    SNID_COLUMN,
+    TARGET_COLUMN,
+)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Extract per-SNID r-band features.")
-    parser.add_argument("--input", default=RBAND_PHOTOMETRY_PATH, help="Joined r-band parquet.")
+    parser = argparse.ArgumentParser(description="Extract per-SNID g/r-band features.")
+    parser.add_argument("--input", default=GBAND_RBAND_PHOTOMETRY_PATH, help="Joined g/r-band parquet.")
     parser.add_argument("--output", default=FEATURES_PATH, help="Output feature parquet.")
     parser.add_argument("--min-points", type=int, default=5, help="Minimum observations per SNID.")
     parser.add_argument(
@@ -57,36 +63,8 @@ def estimate_period(mjd: np.ndarray, flux: np.ndarray) -> float:
     return 1.0 / best_frequency
 
 
-def extract_features_for_group(snid: str, target: str, group: pd.DataFrame) -> dict[str, object] | None:
-    clean = group[["MJD", "FLUXCAL"]].dropna().sort_values("MJD")
-    if len(clean) < 5:
-        return None
-
-    flux = clean["FLUXCAL"].to_numpy(dtype=float)
-    mjd = clean["MJD"].to_numpy(dtype=float)
-    mean_flux = float(np.mean(flux))
-    std_flux = float(np.std(flux, ddof=1)) if len(flux) > 1 else 0.0
-
-    return {
-        SNID_COLUMN: snid,
-        TARGET_COLUMN: target,
-        "Mean": mean_flux,
-        "Std": std_flux,
-        "Skew": float(skew(flux, bias=False, nan_policy="omit")),
-        "Kurtosis": float(kurtosis(flux, bias=False, nan_policy="omit")),
-        "Mean_Variance": float(std_flux / mean_flux) if mean_flux != 0 else np.nan,
-        "Period": estimate_period(mjd, flux),
-        "Amplitude": float((np.nanmax(flux) - np.nanmin(flux)) / 2.0),
-    }
-
-
-def extract_features_from_arrays(
-    snid: str,
-    target: str,
-    mjd: np.ndarray,
-    flux: np.ndarray,
-) -> dict[str, object] | None:
-    if len(flux) < 5:
+def band_features(mjd: np.ndarray, flux: np.ndarray, min_points: int) -> dict[str, float] | None:
+    if len(flux) < min_points:
         return None
 
     order = np.argsort(mjd)
@@ -95,14 +73,12 @@ def extract_features_from_arrays(
     valid = np.isfinite(mjd) & np.isfinite(flux)
     mjd = mjd[valid]
     flux = flux[valid]
-    if len(flux) < 5:
+    if len(flux) < min_points:
         return None
 
     mean_flux = float(np.mean(flux))
     std_flux = float(np.std(flux, ddof=1)) if len(flux) > 1 else 0.0
     return {
-        SNID_COLUMN: snid,
-        TARGET_COLUMN: target,
         "Mean": mean_flux,
         "Std": std_flux,
         "Skew": float(skew(flux, bias=False, nan_policy="omit")),
@@ -114,21 +90,45 @@ def extract_features_from_arrays(
 
 
 def extract_features_from_payload(
-    payload: tuple[str, str, np.ndarray, np.ndarray],
+    payload: tuple[str, str, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int],
 ) -> dict[str, object] | None:
-    return extract_features_from_arrays(*payload)
+    snid, target, mjd_g, flux_g, mjd_r, flux_r, min_points = payload
+    features_g = band_features(mjd_g, flux_g, min_points)
+    features_r = band_features(mjd_r, flux_r, min_points)
+    if features_g is None or features_r is None:
+        return None
+
+    row: dict[str, object] = {
+        SNID_COLUMN: snid,
+        TARGET_COLUMN: target,
+    }
+    row.update({f"{feature}_g": features_g[feature] for feature in BASE_FEATURE_COLUMNS})
+    row.update({f"{feature}_r": features_r[feature] for feature in BASE_FEATURE_COLUMNS})
+    row["Color_g_r"] = features_g["Mean"] - features_r["Mean"]
+    return row
 
 
-def group_payloads(photometry: pd.DataFrame) -> list[tuple[str, str, np.ndarray, np.ndarray]]:
+def group_payloads(
+    photometry: pd.DataFrame,
+    min_points: int,
+) -> list[tuple[str, str, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]]:
     payloads = []
     grouped = photometry.groupby([SNID_COLUMN, TARGET_COLUMN], sort=False)
     for (snid, target), group in grouped:
+        g_band = group.loc[group["BAND"] == "g", ["MJD", "FLUXCAL"]]
+        r_band = group.loc[group["BAND"] == "r", ["MJD", "FLUXCAL"]]
+        if len(g_band) < min_points or len(r_band) < min_points:
+            continue
+
         payloads.append(
             (
                 str(snid),
                 str(target),
-                group["MJD"].to_numpy(dtype=float, copy=True),
-                group["FLUXCAL"].to_numpy(dtype=float, copy=True),
+                g_band["MJD"].to_numpy(dtype=float, copy=True),
+                g_band["FLUXCAL"].to_numpy(dtype=float, copy=True),
+                r_band["MJD"].to_numpy(dtype=float, copy=True),
+                r_band["FLUXCAL"].to_numpy(dtype=float, copy=True),
+                min_points,
             )
         )
     return payloads
@@ -141,21 +141,20 @@ def extract_features(
     workers: int | None = None,
 ) -> pd.DataFrame:
     photometry = pd.read_parquet(input_path)
-    required_columns = {SNID_COLUMN, TARGET_COLUMN, "MJD", "FLUXCAL"}
+    required_columns = {SNID_COLUMN, TARGET_COLUMN, "MJD", "BAND", "FLUXCAL"}
     missing = required_columns - set(photometry.columns)
     if missing:
         raise ValueError(f"Input is missing required columns: {sorted(missing)}")
 
-    counts = photometry.groupby(SNID_COLUMN)["FLUXCAL"].transform("count")
-    photometry = photometry.loc[counts >= min_points].copy()
-    payloads = group_payloads(photometry)
+    photometry = photometry.loc[photometry["BAND"].isin(["g", "r"])].copy()
+    payloads = group_payloads(photometry, min_points)
     worker_count = max(1, workers or 1)
     print(f"Extracting features for {len(payloads):,} light curves using {worker_count} workers")
 
     rows = []
     if worker_count == 1:
         for index, payload in enumerate(payloads, start=1):
-            features = extract_features_from_arrays(*payload)
+            features = extract_features_from_payload(payload)
             if features is not None:
                 rows.append(features)
             if index % 1000 == 0:

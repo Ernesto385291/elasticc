@@ -1,4 +1,4 @@
-"""Join ELAsTiCC HEAD/PHOTOMETRY parquet files and keep only r-band rows."""
+"""Join ELAsTiCC HEAD/PHOTOMETRY parquet files and keep g/r-band rows."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from pathlib import Path
 import duckdb
 import pyarrow.parquet as pq
 
-from config import CLASS_FILE_ALIASES, PROCESSED_DIR, RBAND_PHOTOMETRY_PATH
+from config import CLASS_FILE_ALIASES, GBAND_RBAND_PHOTOMETRY_PATH, PROCESSED_DIR
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create a single r-band ELAsTiCC photometry parquet file."
+        description="Create a single g/r-band ELAsTiCC photometry parquet file."
     )
     parser.add_argument(
         "--input-dir",
@@ -26,8 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=RBAND_PHOTOMETRY_PATH,
-        help="Output parquet path for joined r-band photometry.",
+        default=GBAND_RBAND_PHOTOMETRY_PATH,
+        help="Output parquet path for joined g/r-band photometry.",
     )
     parser.add_argument(
         "--overwrite",
@@ -83,7 +83,7 @@ def build_class_query(class_name: str, head_path: Path, phot_path: Path) -> str:
         FROM read_parquet({sql_literal(phot_path)}) AS p
         INNER JOIN read_parquet({sql_literal(head_path)}) AS h
             ON CAST(p.SNID AS VARCHAR) = CAST(h.SNID AS VARCHAR)
-        WHERE p.BAND = 'r'
+        WHERE p.BAND IN ('g', 'r')
           AND p.FLUXCAL IS NOT NULL
           AND p.MJD IS NOT NULL
     """
