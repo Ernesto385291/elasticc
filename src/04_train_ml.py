@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +22,12 @@ def parse_args() -> argparse.Namespace:
         "--model-output",
         default=Path(TRAIN_PATH).parent / "xgboost_model.json",
         help="Where to save the trained XGBoost model.",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="CPU threads for XGBoost. Defaults to all CPU cores.",
     )
     return parser.parse_args()
 
@@ -41,7 +48,7 @@ def load_xy(path: str, label_encoder: LabelEncoder | None = None):
     return x, y, label_encoder
 
 
-def train_xgboost(train_path: str, test_path: str, model_output: str) -> XGBClassifier:
+def train_xgboost(train_path: str, test_path: str, model_output: str, n_jobs: int) -> XGBClassifier:
     x_train, y_train, label_encoder = load_xy(train_path)
     x_test, y_test, _ = load_xy(test_path, label_encoder)
 
@@ -55,7 +62,7 @@ def train_xgboost(train_path: str, test_path: str, model_output: str) -> XGBClas
         colsample_bytree=0.9,
         eval_metric="mlogloss",
         random_state=RANDOM_STATE,
-        n_jobs=-1,
+        n_jobs=max(1, n_jobs),
     )
     model.fit(x_train, y_train)
     predictions = model.predict(x_test)
@@ -75,7 +82,7 @@ def train_xgboost(train_path: str, test_path: str, model_output: str) -> XGBClas
 
 def main() -> int:
     args = parse_args()
-    train_xgboost(str(args.train), str(args.test), str(args.model_output))
+    train_xgboost(str(args.train), str(args.test), str(args.model_output), args.n_jobs)
     return 0
 
 

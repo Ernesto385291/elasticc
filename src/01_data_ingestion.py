@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
 
@@ -32,6 +33,12 @@ def parse_args() -> argparse.Namespace:
         "--overwrite",
         action="store_true",
         help="Replace an existing output file.",
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="DuckDB worker threads to use. Defaults to all CPU cores.",
     )
     return parser.parse_args()
 
@@ -82,7 +89,12 @@ def build_class_query(class_name: str, head_path: Path, phot_path: Path) -> str:
     """
 
 
-def ingest_rband(input_dir: Path, output_path: Path, overwrite: bool = False) -> Path:
+def ingest_rband(
+    input_dir: Path,
+    output_path: Path,
+    overwrite: bool = False,
+    threads: int | None = None,
+) -> Path:
     pairs = discover_class_pairs(input_dir)
     if not pairs:
         raise FileNotFoundError(f"No HEAD/PHOTOMETRY parquet pairs found in {input_dir}")
@@ -96,6 +108,8 @@ def ingest_rband(input_dir: Path, output_path: Path, overwrite: bool = False) ->
 
     con = duckdb.connect()
     try:
+        if threads:
+            con.execute(f"PRAGMA threads={max(1, threads)}")
         class_queries = []
         for class_name, head_path, phot_path in pairs:
             print(f"Processing {class_name}: {phot_path.name} + {head_path.name}")
@@ -119,7 +133,7 @@ def ingest_rband(input_dir: Path, output_path: Path, overwrite: bool = False) ->
 
 def main() -> int:
     args = parse_args()
-    ingest_rband(args.input_dir, args.output, args.overwrite)
+    ingest_rband(args.input_dir, args.output, args.overwrite, args.threads)
     return 0
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +46,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument(
+        "--threads",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="PyTorch CPU compute threads. Defaults to all CPU cores.",
+    )
+    parser.add_argument(
+        "--loader-workers",
+        type=int,
+        default=0,
+        help="DataLoader worker processes. Tensor data is already in memory, so 0 is often fastest.",
+    )
+    parser.add_argument(
         "--model-output",
         default=Path(TRAIN_PATH).parent / "mlp_model.pt",
         help="Where to save the best validation checkpoint.",
@@ -67,9 +80,21 @@ def frame_to_xy(df: pd.DataFrame, label_encoder: LabelEncoder | None = None):
     return x, y.astype(np.int64), label_encoder
 
 
-def make_loader(x: np.ndarray, y: np.ndarray, batch_size: int, shuffle: bool) -> DataLoader:
+def make_loader(
+    x: np.ndarray,
+    y: np.ndarray,
+    batch_size: int,
+    shuffle: bool,
+    loader_workers: int,
+) -> DataLoader:
     dataset = TensorDataset(torch.from_numpy(x), torch.from_numpy(y))
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=max(0, loader_workers),
+        persistent_workers=loader_workers > 0,
+    )
 
 
 def evaluate_loss(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> float:
@@ -98,6 +123,9 @@ def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> np.nd
 
 
 def train_mlp(args: argparse.Namespace) -> MLPClassifier:
+    torch.set_num_threads(max(1, args.threads))
+    torch.set_num_interop_threads(max(1, min(args.threads, 4)))
+
     train_df = pd.read_parquet(args.train)
     val_df = pd.read_parquet(args.val)
     test_df = pd.read_parquet(args.test)
@@ -116,9 +144,9 @@ def train_mlp(args: argparse.Namespace) -> MLPClassifier:
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    train_loader = make_loader(x_train, y_train, args.batch_size, shuffle=True)
-    val_loader = make_loader(x_val, y_val, args.batch_size, shuffle=False)
-    test_loader = make_loader(x_test, y_test, args.batch_size, shuffle=False)
+    train_loader = make_loader(x_train, y_train, args.batch_size, shuffle=True, loader_workers=args.loader_workers)
+    val_loader = make_loader(x_val, y_val, args.batch_size, shuffle=False, loader_workers=args.loader_workers)
+    test_loader = make_loader(x_test, y_test, args.batch_size, shuffle=False, loader_workers=args.loader_workers)
 
     best_val_loss = float("inf")
     epochs_without_improvement = 0
