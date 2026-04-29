@@ -1,0 +1,15 @@
+[project]
+name = "elasticc"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "astropy>=7.2.0",
+    "duckdb>=1.5.2",
+    "numpy>=2.4.4",
+    "pandas>=3.0.2",
+    "pyarrow>=24.0.0",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.1",
+    "torch>=2.11.0",
+    "xgboost>=3.2.0",
+]

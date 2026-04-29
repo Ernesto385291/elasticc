@@ -1,0 +1,19 @@
+read_data.ipynb
+
+# macOS
+.DS_Store
+
+# Python virtual env and caches
+.venv/
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local environment files
+.env
+.env.*
+
+# Generated datasets/artifacts
+processed/

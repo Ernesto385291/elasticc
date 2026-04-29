@@ -1,0 +1,9 @@
+duckdb
+pandas
+pyarrow
+numpy
+scipy
+astropy
+scikit-learn
+xgboost
+torch
