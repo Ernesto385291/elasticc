@@ -6,6 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.metrics import classification_report
 from sklearn.preprocessing import LabelEncoder
@@ -51,21 +52,28 @@ def load_xy(path: str, label_encoder: LabelEncoder | None = None):
 def train_xgboost(train_path: str, test_path: str, model_output: str, n_jobs: int) -> XGBClassifier:
     x_train, y_train, label_encoder = load_xy(train_path)
     x_test, y_test, _ = load_xy(test_path, label_encoder)
+    num_classes = len(label_encoder.classes_)
 
-    model = XGBClassifier(
-        objective="multi:softprob",
-        num_class=len(label_encoder.classes_),
-        n_estimators=500,
-        max_depth=6,
-        learning_rate=0.05,
-        subsample=0.9,
-        colsample_bytree=0.9,
-        eval_metric="mlogloss",
-        random_state=RANDOM_STATE,
-        n_jobs=max(1, n_jobs),
-    )
+    model_params = {
+        "objective": "binary:logistic" if num_classes == 2 else "multi:softprob",
+        "n_estimators": 500,
+        "max_depth": 6,
+        "learning_rate": 0.05,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+        "eval_metric": "logloss" if num_classes == 2 else "mlogloss",
+        "random_state": RANDOM_STATE,
+        "n_jobs": max(1, n_jobs),
+    }
+    if num_classes > 2:
+        model_params["num_class"] = num_classes
+
+    model = XGBClassifier(**model_params)
     model.fit(x_train, y_train)
     predictions = model.predict(x_test)
+    predictions = np.asarray(predictions)
+    if predictions.ndim > 1:
+        predictions = np.argmax(predictions, axis=1)
 
     print(
         classification_report(
