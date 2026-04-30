@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import classification_report
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -23,12 +24,15 @@ class MLPClassifier(nn.Module):
         super().__init__()
         self.network = nn.Sequential(
             nn.Linear(input_dim, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.15),
             nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.15),
             nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
             nn.ReLU(),
             nn.Linear(32, num_classes),
         )
@@ -46,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument(
         "--threads",
         type=int,
@@ -62,6 +67,11 @@ def parse_args() -> argparse.Namespace:
         "--model-output",
         default=Path(TRAIN_PATH).parent / "mlp_model.pt",
         help="Where to save the best validation checkpoint.",
+    )
+    parser.add_argument(
+        "--metrics-output",
+        default=Path(TRAIN_PATH).parent / "mlp_metrics.json",
+        help="Where to save metrics and confusion matrix.",
     )
     return parser.parse_args()
 
@@ -163,7 +173,7 @@ def train_mlp(args: argparse.Namespace) -> MLPClassifier:
 
     model = MLPClassifier(input_dim=expected_features, num_classes=len(label_encoder.classes_)).to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     train_loader = make_loader(
         x_train_tensor,
@@ -238,14 +248,39 @@ def train_mlp(args: argparse.Namespace) -> MLPClassifier:
         model.load_state_dict({key: value.to(device) for key, value in best_state.items()})
 
     test_predictions = predict(model, test_loader, device)
+    report = classification_report(
+        y_test,
+        test_predictions,
+        target_names=label_encoder.classes_,
+        digits=4,
+        output_dict=True,
+        zero_division=0,
+    )
     print(
         classification_report(
             y_test,
             test_predictions,
             target_names=label_encoder.classes_,
             digits=4,
+            zero_division=0,
         )
     )
+
+    matrix = confusion_matrix(y_test, test_predictions)
+    matrix_df = pd.DataFrame(matrix, index=label_encoder.classes_, columns=label_encoder.classes_)
+    print("\nConfusion Matrix:")
+    print(matrix_df.to_string())
+
+    metrics = {
+        "feature_columns": FEATURE_COLUMNS,
+        "classes": label_encoder.classes_.tolist(),
+        "accuracy": accuracy_score(y_test, test_predictions),
+        "best_val_loss": best_val_loss,
+        "classification_report": report,
+        "confusion_matrix": matrix_df.to_dict(),
+    }
+    Path(args.metrics_output).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    print(f"Saved metrics to {args.metrics_output}")
     print(f"Saved best checkpoint to {args.model_output}")
     return model
 
