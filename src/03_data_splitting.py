@@ -133,6 +133,13 @@ def write_splits(
         raise ValueError(f"Feature file must contain '{TARGET_COLUMN}' column")
     features = features.copy()
     features[TARGET_COLUMN] = features[TARGET_COLUMN].replace(TARGET_ALIASES)
+    present_classes = set(features[TARGET_COLUMN].unique())
+    unknown_classes = sorted(present_classes - set(DATA_SPLITS))
+    if unknown_classes:
+        counts = features.loc[features[TARGET_COLUMN].isin(unknown_classes), TARGET_COLUMN].value_counts()
+        print("Warning: labels not present in DATA_SPLITS and ignored by the sampler:")
+        for class_name, count in counts.items():
+            print(f"  {class_name}: {count:,} rows")
 
     train_df, test_df, val_df = sample_exact_splits(features, seed, require_all_classes)
     train_df.to_parquet(train_output, index=False)
