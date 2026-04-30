@@ -63,6 +63,57 @@ def estimate_period(mjd: np.ndarray, flux: np.ndarray) -> float:
     return 1.0 / best_frequency
 
 
+def transient_features(mjd: np.ndarray, flux: np.ndarray) -> dict[str, float]:
+    """Return baseline-relative transient metrics, using NaN when a phase is missed."""
+    features = {
+        "Rise_Time": np.nan,
+        "Decay_Time": np.nan,
+        "Peak_to_Median_Ratio": np.nan,
+        "Max_Flux_Diff": np.nan,
+    }
+
+    try:
+        if len(flux) < 2:
+            return features
+
+        peak_index = int(np.nanargmax(flux))
+        peak_flux = float(flux[peak_index])
+        peak_mjd = float(mjd[peak_index])
+        median_flux = float(np.nanmedian(flux))
+        baseline_flux = float(np.nanpercentile(flux, 10))
+        peak_excess = peak_flux - baseline_flux
+
+        if np.isfinite(median_flux) and median_flux != 0:
+            features["Peak_to_Median_Ratio"] = peak_flux / median_flux
+
+        flux_diff = np.abs(np.diff(flux))
+        if len(flux_diff) > 0:
+            features["Max_Flux_Diff"] = float(np.nanmax(flux_diff))
+
+        pre_peak_flux = flux[: peak_index + 1]
+        pre_peak_mjd = mjd[: peak_index + 1]
+        if len(pre_peak_flux) >= 2 and np.isfinite(peak_excess) and peak_excess > 0:
+            rise_threshold = baseline_flux + 0.1 * peak_excess
+            rise_candidates = np.flatnonzero(pre_peak_flux >= rise_threshold)
+            if len(rise_candidates) > 0:
+                rise_mjd = float(pre_peak_mjd[int(rise_candidates[0])])
+                if rise_mjd <= peak_mjd:
+                    features["Rise_Time"] = peak_mjd - rise_mjd
+
+        post_peak_flux = flux[peak_index + 1 :]
+        post_peak_mjd = mjd[peak_index + 1 :]
+        if len(post_peak_flux) > 0 and np.isfinite(peak_excess) and peak_excess > 0:
+            decay_threshold = baseline_flux + 0.5 * peak_excess
+            decay_candidates = np.flatnonzero(post_peak_flux <= decay_threshold)
+            if len(decay_candidates) > 0:
+                decay_mjd = float(post_peak_mjd[int(decay_candidates[0])])
+                features["Decay_Time"] = decay_mjd - peak_mjd
+    except Exception:
+        return features
+
+    return features
+
+
 def band_features(mjd: np.ndarray, flux: np.ndarray, min_points: int) -> dict[str, float] | None:
     if len(flux) < min_points:
         return None
@@ -78,7 +129,7 @@ def band_features(mjd: np.ndarray, flux: np.ndarray, min_points: int) -> dict[st
 
     mean_flux = float(np.mean(flux))
     std_flux = float(np.std(flux, ddof=1)) if len(flux) > 1 else 0.0
-    return {
+    features = {
         "Mean": mean_flux,
         "Std": std_flux,
         "Skew": float(skew(flux, bias=False, nan_policy="omit")),
@@ -87,6 +138,8 @@ def band_features(mjd: np.ndarray, flux: np.ndarray, min_points: int) -> dict[st
         "Period": estimate_period(mjd, flux),
         "Amplitude": float((np.nanmax(flux) - np.nanmin(flux)) / 2.0),
     }
+    features.update(transient_features(mjd, flux))
+    return features
 
 
 def extract_features_from_payload(
@@ -170,7 +223,7 @@ def extract_features(
                     print(f"Processed {index:,} light curves")
 
     feature_df = pd.DataFrame(rows)
-    feature_df = feature_df.replace([np.inf, -np.inf], np.nan).dropna()
+    feature_df = feature_df.replace([np.inf, -np.inf], np.nan)
     feature_df.to_parquet(output_path, index=False)
     print(f"Saved {len(feature_df):,} feature rows to {output_path}")
     return feature_df

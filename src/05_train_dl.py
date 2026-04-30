@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from torch import nn
@@ -133,12 +134,19 @@ def train_mlp(args: argparse.Namespace) -> MLPClassifier:
     x_val, y_val, _ = frame_to_xy(val_df, label_encoder)
     x_test, y_test, _ = frame_to_xy(test_df, label_encoder)
 
+    expected_features = len(FEATURE_COLUMNS)
+    if x_train.shape[1] != expected_features:
+        raise ValueError(f"Expected exactly {expected_features} input features, found {x_train.shape[1]}")
+
+    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
+    x_train = imputer.fit_transform(x_train).astype(np.float32)
+    x_val = imputer.transform(x_val).astype(np.float32)
+    x_test = imputer.transform(x_test).astype(np.float32)
+
     scaler = StandardScaler()
     x_train = scaler.fit_transform(x_train).astype(np.float32)
     x_val = scaler.transform(x_val).astype(np.float32)
     x_test = scaler.transform(x_test).astype(np.float32)
-    if x_train.shape[1] != 15:
-        raise ValueError(f"Expected exactly 15 input features, found {x_train.shape[1]}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -153,7 +161,7 @@ def train_mlp(args: argparse.Namespace) -> MLPClassifier:
     x_test_tensor = torch.from_numpy(x_test).to(device)
     y_test_tensor = torch.from_numpy(y_test).to(device)
 
-    model = MLPClassifier(input_dim=15, num_classes=len(label_encoder.classes_)).to(device)
+    model = MLPClassifier(input_dim=expected_features, num_classes=len(label_encoder.classes_)).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -213,6 +221,7 @@ def train_mlp(args: argparse.Namespace) -> MLPClassifier:
                     "model_state_dict": best_state,
                     "feature_columns": FEATURE_COLUMNS,
                     "classes": label_encoder.classes_.tolist(),
+                    "imputer_statistics": imputer.statistics_,
                     "scaler_mean": scaler.mean_,
                     "scaler_scale": scaler.scale_,
                     "val_loss": best_val_loss,

@@ -26,6 +26,10 @@ BASE_FEATURE_COLUMNS = [
     "Mean_Variance",
     "Period",
     "Amplitude",
+    "Rise_Time",
+    "Decay_Time",
+    "Peak_to_Median_Ratio",
+    "Max_Flux_Diff",
 ]
 FEATURE_COLUMNS = [
     *(f"{feature}_g" for feature in BASE_FEATURE_COLUMNS),
